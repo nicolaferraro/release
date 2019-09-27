@@ -179,7 +179,7 @@ func ListReleaseNotes(
 			}
 		}
 
-		note, err := ReleaseNoteFromCommit(commit, client, relVer, opts...)
+		note, err := ReleaseNoteFromCommit(commit, client, logger, relVer, opts...)
 		if err != nil {
 			level.Error(logger).Log(
 				"err", err,
@@ -319,10 +319,10 @@ func classifyURL(url *url.URL) DocType {
 
 // ReleaseNoteFromCommit produces a full contextualized release note given a
 // GitHub commit API resource.
-func ReleaseNoteFromCommit(commit *github.RepositoryCommit, client *github.Client, relVer string, opts ...GithubApiOption) (*ReleaseNote, error) {
+func ReleaseNoteFromCommit(commit *github.RepositoryCommit, client *github.Client, logger log.Logger, relVer string, opts ...GithubApiOption) (*ReleaseNote, error) {
 	c := configFromOpts(opts...)
 
-	pr, err := PRFromCommit(client, commit, opts...)
+	pr, err := PRFromCommit(client, logger, commit, opts...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error parsing release note from commit %s", commit.GetSHA())
 	}
@@ -444,14 +444,14 @@ func ListCommitsWithNotes(
 	for i, commit := range commits {
 
 		level.Debug(logger).Log("msg", "################################################")
-		level.Info(logger).Log("msg", fmt.Sprintf("[%d/%d - %0.2f%%]", i+1, len(commits), (float64(i+1)/float64(len(commits)))*100.0 ))
+		level.Info(logger).Log("msg", fmt.Sprintf("[%d/%d - %0.2f%%]", i+1, len(commits), (float64(i+1)/float64(len(commits)))*100.0))
 		level.Debug(logger).Log(
 			"msg", "Processing commit",
 			"func", "ListCommitsWithNotes",
 			"sha", commit.GetSHA(),
 		)
 
-		pr, err := PRFromCommit(client, commit, opts...)
+		pr, err := PRFromCommit(client, logger, commit, opts...)
 		if err != nil {
 			if err.Error() == "no matches found when parsing PR from commit" {
 				level.Debug(logger).Log(
@@ -538,10 +538,10 @@ func ListCommitsWithNotes(
 // PRFromCommit return an API Pull Request struct given a commit struct. This is
 // useful for going from a commit log to the PR (which contains useful info such
 // as labels).
-func PRFromCommit(client *github.Client, commit *github.RepositoryCommit, opts ...GithubApiOption) (*github.PullRequest, error) {
+func PRFromCommit(client *github.Client, logger log.Logger, commit *github.RepositoryCommit, opts ...GithubApiOption) (*github.PullRequest, error) {
 	c := configFromOpts(opts...)
 
-	number, err := getPRNumberFromCommitMessage(*commit.Commit.Message)
+	number, err := getPRNumberFromCommit(client, logger, commit, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -592,7 +592,7 @@ func filterCommits(
 	for _, commit := range commits {
 		body := commit.GetCommit().GetMessage()
 		if commit.GetAuthor().GetLogin() == "k8s-merge-robot" {
-			pr, err := PRFromCommit(client, commit, opts...)
+			pr, err := PRFromCommit(client, logger, commit, opts...)
 			if err != nil {
 				level.Info(logger).Log(
 					"msg", "error getting PR from k8s-merge-robot commit",
@@ -677,6 +677,42 @@ func HasString(a []string, x string) bool {
 		}
 	}
 	return false
+}
+
+func getPRNumberFromCommit(client *github.Client, logger log.Logger, commit *github.RepositoryCommit, opts ...GithubApiOption) (int, error) {
+	num, err := getPRNumberFromCommitMessage(*commit.Commit.Message)
+	if err != nil {
+		level.Debug(logger).Log(
+			"err", err,
+			"msg", "error getting the pr number from commit message",
+			"sha", commit.GetSHA(),
+		)
+		return getPRNumberFromCommitSHA(client, *commit.SHA, opts...)
+	}
+	return num, nil
+}
+
+// getPRNumberFromSHA retrieves the PR number from a commit sha
+func getPRNumberFromCommitSHA(client *github.Client, sha string, opts ...GithubApiOption) (int, error) {
+	c := configFromOpts(opts...)
+
+	plo := &github.PullRequestListOptions{
+		State: "closed",
+		ListOptions: github.ListOptions{
+			Page:    1,
+			PerPage: 1,
+		},
+	}
+
+	prs, _, err := client.PullRequests.ListPullRequestsWithCommit(c.ctx, c.org, c.repo, sha, plo)
+	if err != nil {
+		return 0, err
+	}
+	if len(prs) > 0 {
+		return *prs[0].Number, nil
+	}
+
+	return 0, errors.Errorf("no pr found for sha %s", sha)
 }
 
 func getPRNumberFromCommitMessage(commitMessage string) (int, error) {
