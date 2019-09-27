@@ -33,6 +33,7 @@ type options struct {
 	requiredAuthor string
 	debug          bool
 	logger         log.Logger
+	version        bool
 }
 
 func (o *options) BindFlags() *flag.FlagSet {
@@ -142,6 +143,13 @@ func (o *options) BindFlags() *flag.FlagSet {
 		"debug",
 		env.Bool("DEBUG", false),
 		"Enable debug logging",
+	)
+
+	flags.BoolVar(
+		&o.version,
+		"version",
+		false,
+		"Print version information",
 	)
 
 	return flags
@@ -262,6 +270,10 @@ func parseOptions(args []string, logger log.Logger) (*options, error) {
 		return nil, err
 	}
 
+	if opts.version {
+		return nil, errors.New("version")
+	}
+
 	// The GitHub Token is required.
 	if opts.githubToken == "" {
 		return nil, errors.New("GitHub token must be set via -github-token or $GITHUB_TOKEN")
@@ -322,7 +334,10 @@ func parseOptions(args []string, logger log.Logger) (*options, error) {
 func run(logger log.Logger, args []string) error {
 	// Parse the CLI options and enforce required defaults
 	opts, err := parseOptions(args, logger)
-	if err != nil {
+	if err != nil && err.Error() == "version" {
+		fmt.Println("nicolaferraro")
+		return nil
+	} else if err != nil {
 		level.Error(logger).Log("msg", "error parsing options", "err", err)
 		return err
 	}
